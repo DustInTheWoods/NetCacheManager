@@ -1,0 +1,10 @@
+# config.toml
+
+[socket]
+mode = "unix"               # "unix" oder "tcp"
+path = "/tmp/netcache.sock" # Pfad zur socket Datei
+addr = "127.0.0.1:8787"     # Nur relevant bei TCP
+
+[storage]
+max_ram_size = 104857600    # maximale ram größe in Bytes
+ttl_checktime = 5          # Wartezeit zwischen den ttl checks
