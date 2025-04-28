@@ -3,8 +3,9 @@ use crate::config::config::Config;
 use crate::protocol::tlv::{encode_tlv_fields, parse_tlv_fields, TlvField};
 use crate::storage::ram_handler::RamStore;
 use crate::storage::storage_handler::{handle_event, StorageError};
-use log::{error, info};
+use log::{debug, error, info};
 use std::sync::Arc;
+use std::time::Instant;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream, UnixListener, UnixStream};
 
@@ -16,7 +17,10 @@ pub async fn start_server(config: Config, store: Arc<RamStore>) {
                 let listener = UnixListener::bind(path).expect("UnixSocket konnte nicht gebunden werden");
                 info!("Lausche auf Unix-Socket: {}", path);
                 loop {
-                    let (stream, _) = listener.accept().await.expect("Fehler beim Annehmen");
+                    let (stream, addr) = listener.accept().await.expect("Fehler beim Annehmen");
+
+                    info!("Neue Verbindung von: {:?}", addr);
+
                     let store = store.clone(); // <- Store weiterreichen
                     tokio::spawn(async move {
                         handle_unix_client(stream, store).await;
@@ -29,7 +33,10 @@ pub async fn start_server(config: Config, store: Arc<RamStore>) {
                 let listener = TcpListener::bind(addr).await.expect("TCP konnte nicht gestartet werden");
                 info!("Lausche auf TCP-Adresse: {}", addr);
                 loop {
-                    let (stream, _) = listener.accept().await.expect("Fehler beim Annehmen");
+                    let (stream, addr) = listener.accept().await.expect("Fehler beim Annehmen");
+
+                    info!("Neue Verbindung von: {:?}", addr);
+
                     let store = store.clone();
                     tokio::spawn(async move {
                         handle_tcp_client(stream, store).await;
@@ -46,6 +53,9 @@ async fn handle_unix_client(stream: UnixStream, store: Arc<RamStore>) {
 }
 
 async fn handle_tcp_client(stream: TcpStream, store: Arc<RamStore>) {
+    // TCP-Nodelay aktivieren
+    stream.set_nodelay(true).expect("Setze TCP_NODELAY fehlgeschlagen");
+
     handle_client(stream, store).await;
 }
 
@@ -53,30 +63,39 @@ async fn handle_client<S>(mut stream: S, store: Arc<RamStore>)
 where
     S: AsyncReadExt + AsyncWriteExt + Unpin,
 {
-    let mut len_buf = [0u8; 4];
-    if stream.read_exact(&mut len_buf).await.is_err() {
-        error!("Fehler beim Lesen der Nachrichtenlänge");
-        return;
+    loop {
+        let mut len_buf = [0u8; 4];
+        if let Err(e) = stream.read_exact(&mut len_buf).await {
+            error!("Fehler beim Lesen der Nachrichtenlänge: {}", e);
+            break; // Verbindung wird beendet, wenn Client trennt oder Fehler
+        }
+
+        let start_time = Instant::now();
+        
+        let msg_len = u32::from_be_bytes(len_buf) as usize;
+        let mut msg_buf = vec![0u8; msg_len];
+        if let Err(e) = stream.read_exact(&mut msg_buf).await {
+            error!("Fehler beim Lesen der Nachricht: {}", e);
+            break;
+        }
+
+        let event = msg_buf[0];
+        let fields = parse_tlv_fields(Bytes::copy_from_slice(&msg_buf[1..]));
+
+        info!("Empfangenes Event: {:#04x}, {} TLVs", event, fields.len());
+
+        let response = match handle_event(event, fields, store.clone()).await {
+            Ok(tlvs) => ResponseBuilder::ok(Some(tlvs)),
+            Err(err) => ResponseBuilder::error(err),
+        };
+
+        debug!("Zeit zur Verarbeitung der Anfrage: {:?}", Instant::now() - start_time);
+
+        if let Err(e) = stream.write_all(&response).await {
+            error!("Fehler beim Senden der Antwort: {}", e);
+            break;
+        }
     }
-    
-    let msg_len = u32::from_be_bytes(len_buf) as usize;
-    let mut msg_buf = vec![0u8; msg_len];
-    if stream.read_exact(&mut msg_buf).await.is_err() {
-        error!("Fehler beim Lesen der Nachricht");
-        return;
-    }
-
-    let event = msg_buf[0];
-    let fields = parse_tlv_fields(Bytes::copy_from_slice(&msg_buf[1..]));
-
-    info!("Empfangenes Event: {:#04x}, {} TLVs", event, fields.len());
-
-    let response = match handle_event(event, fields, store).await {
-        Ok(tlvs) => ResponseBuilder::ok(Some(tlvs)),
-        Err(err) => ResponseBuilder::error(err),
-    };
-
-    let _ = stream.write_all(&response).await;
 }
 
 struct ResponseBuilder;

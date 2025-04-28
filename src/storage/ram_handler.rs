@@ -122,7 +122,7 @@ impl RamStore {
         }
     }
 
-    pub async fn delete_group(&self, group: &[u8]) {
+    pub async fn delete_by_group(&self, group: &[u8]) {
         let group_key = Bytes::copy_from_slice(group);
         let mut group_index = self.group_index.write().await;
         let mut data = self.data.write().await;

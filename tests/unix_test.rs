@@ -12,26 +12,35 @@ mod tests {
     use std::fs;
     use std::time::{Duration, Instant};
 
-    async fn send_request(event: u8, tlvs: Vec<TlvField>, socket_path: &str) -> Vec<u8> {
-        let mut stream = UnixStream::connect(socket_path)
-            .await
-            .expect("Verbindung fehlgeschlagen");
+    struct TestClient {
+        stream: UnixStream,
+    }
 
-        let mut payload = BytesMut::new();
-        for tlv in &tlvs {
-            tlv.encode(&mut payload);
+    impl TestClient {
+        async fn connect(socket_path: &str) -> Self {
+            let stream = UnixStream::connect(socket_path)
+                .await
+                .expect("Verbindung fehlgeschlagen");
+            Self { stream }
         }
 
-        let mut full_msg = vec![event];
-        full_msg.extend_from_slice(&payload);
+        async fn send_request(&mut self, event: u8, tlvs: Vec<TlvField>) -> Vec<u8> {
+            let mut payload = BytesMut::new();
+            for tlv in &tlvs {
+                tlv.encode(&mut payload);
+            }
 
-        let len = (full_msg.len() as u32).to_be_bytes();
-        stream.write_all(&len).await.unwrap();
-        stream.write_all(&full_msg).await.unwrap();
+            let mut full_msg = vec![event];
+            full_msg.extend_from_slice(&payload);
 
-        let mut response = vec![0u8; 1024];
-        let n = stream.read(&mut response).await.unwrap();
-        response[..n].to_vec()
+            let len = (full_msg.len() as u32).to_be_bytes();
+            self.stream.write_all(&len).await.unwrap();
+            self.stream.write_all(&full_msg).await.unwrap();
+
+            let mut response = vec![0u8; 1024];
+            let n = self.stream.read(&mut response).await.unwrap();
+            response[..n].to_vec()
+        }
     }
 
     fn extract_status(response: &[u8]) -> u8 {
@@ -50,13 +59,12 @@ mod tests {
                 addr: None,
             },
             storage: StorageConfig {
-                max_ram_size: 100 * 1024 * 1024, // 100MB
+                max_ram_size: 100 * 1024 * 1024,
                 ttl_checktime: 5
             }
         };
 
         let store = Arc::new(RamStore::new(config.storage.clone()));
-
         tokio::spawn(start_server(config, store));
 
         let mut waited = 0;
@@ -71,18 +79,20 @@ mod tests {
         let socket = "/tmp/test_socket_basic.sock";
         setup_server(socket).await;
 
+        let mut client = TestClient::connect(socket).await;
+
         let key = b"test_key";
         let value = b"test_value";
 
-        let resp = send_request(0x20, vec![
+        let resp = client.send_request(0x20, vec![
             TlvField::new(TlvFieldTypes::KEY , Bytes::from_static(key)),
             TlvField::new(TlvFieldTypes::VALUE, Bytes::from_static(value)),
-        ], socket).await;
+        ]).await;
         assert_eq!(extract_status(&resp), 0x01);
 
-        let resp = send_request(0x21, vec![
+        let resp = client.send_request(0x21, vec![
             TlvField::new(TlvFieldTypes::KEY , Bytes::from_static(key)),
-        ], socket).await;
+        ]).await;
         assert_eq!(extract_status(&resp), 0x01);
     }
 
@@ -91,14 +101,15 @@ mod tests {
         let socket = "/tmp/test_socket_group.sock";
         setup_server(socket).await;
 
+        let mut client = TestClient::connect(socket).await;
         let group = b"test_group";
 
         for (k, v) in [("key1", "val1"), ("key2", "val2"), ("key3", "val3")] {
-            let resp = send_request(0x20, vec![
+            let resp = client.send_request(0x20, vec![
                 TlvField::new(TlvFieldTypes::KEY , Bytes::from_static(k.as_bytes())),
                 TlvField::new(TlvFieldTypes::VALUE , Bytes::from_static(v.as_bytes())),
                 TlvField::new(TlvFieldTypes::GROUP , Bytes::from_static(group)),
-            ], socket).await;
+            ]).await;
             assert_eq!(extract_status(&resp), 0x01);
         }
     }
@@ -108,21 +119,23 @@ mod tests {
         let socket = "/tmp/test_socket_ttl.sock";
         setup_server(socket).await;
 
+        let mut client = TestClient::connect(socket).await;
+
         let key = b"ttl_key";
         let value = b"short_lived";
 
-        let resp = send_request(0x20, vec![
+        let resp = client.send_request(0x20, vec![
             TlvField::new(TlvFieldTypes::KEY  , Bytes::from_static(key)),
             TlvField::new(TlvFieldTypes::VALUE , Bytes::from_static(value)),
             TlvField::new(TlvFieldTypes::TTL , Bytes::from_static(b"1")),
-        ], socket).await;
+        ]).await;
         assert_eq!(extract_status(&resp), 0x01);
 
         tokio::time::sleep(Duration::from_secs(2)).await;
 
-        let resp = send_request(0x21, vec![
+        let resp = client.send_request(0x21, vec![
             TlvField::new(TlvFieldTypes::KEY , Bytes::from_static(key)),
-        ], socket).await;
+        ]).await;
         assert_eq!(extract_status(&resp), 0x02); // NOT FOUND
     }
 
@@ -131,23 +144,25 @@ mod tests {
         let socket = "/tmp/test_socket_delete.sock";
         setup_server(socket).await;
 
+        let mut client = TestClient::connect(socket).await;
+
         let key = b"delete_key";
         let value = b"to_be_deleted";
 
-        let resp = send_request(0x20, vec![
+        let resp = client.send_request(0x20, vec![
             TlvField::new(TlvFieldTypes::KEY , Bytes::from_static(key)),
             TlvField::new(TlvFieldTypes::VALUE, Bytes::from_static(value)),
-        ], socket).await;
+        ]).await;
         assert_eq!(extract_status(&resp), 0x01);
 
-        let resp = send_request(0x22, vec![
+        let resp = client.send_request(0x22, vec![
             TlvField::new(TlvFieldTypes::KEY , Bytes::from_static(key)),
-        ], socket).await;
+        ]).await;
         assert_eq!(extract_status(&resp), 0x01);
 
-        let resp = send_request(0x21, vec![
+        let resp = client.send_request(0x21, vec![
             TlvField::new(TlvFieldTypes::KEY , Bytes::from_static(key)),
-        ], socket).await;
+        ]).await;
         assert_eq!(extract_status(&resp), 0x02);
     }
 
@@ -156,15 +171,18 @@ mod tests {
         let socket = "/tmp/test_socket_flush.sock";
         setup_server(socket).await;
 
+        let mut client = TestClient::connect(socket).await;
+
         for i in 0..5 {
             let key = format!("flush_key{}", i);
-            send_request(0x20, vec![
+            let resp = client.send_request(0x20, vec![
                 TlvField::new(TlvFieldTypes::KEY , Bytes::from(key)),
                 TlvField::new(TlvFieldTypes::VALUE , Bytes::from_static(b"dummy")),
-            ], socket).await;
+            ]).await;
+            assert_eq!(extract_status(&resp), 0x01);
         }
 
-        let resp = send_request(0x23, vec![], socket).await;
+        let resp = client.send_request(0x23, vec![]).await;
         assert_eq!(extract_status(&resp), 0x01);
     }
 
@@ -173,24 +191,26 @@ mod tests {
         let socket = "/tmp/test_socket_perf.sock";
         setup_server(socket).await;
 
+        let mut client = TestClient::connect(socket).await;
+
         let value = Bytes::from_static(b"perfdata");
         let keys: Vec<String> = (0..1000).map(|i| format!("key{}", i)).collect();
 
         let start_set = Instant::now();
         for k in &keys {
-            let resp = send_request(0x20, vec![
+            let resp = client.send_request(0x20, vec![
                 TlvField::new(TlvFieldTypes::KEY, Bytes::from(k.clone())),
                 TlvField::new(TlvFieldTypes::VALUE , value.clone()),
-            ], socket).await;
+            ]).await;
             assert_eq!(extract_status(&resp), 0x01);
         }
         let duration_set = start_set.elapsed();
 
         let start_get = Instant::now();
         for k in &keys {
-            let resp = send_request(0x21, vec![
+            let resp = client.send_request(0x21, vec![
                 TlvField::new(TlvFieldTypes::KEY, Bytes::from(k.clone())),
-            ], socket).await;
+            ]).await;
             assert_eq!(extract_status(&resp), 0x01);
         }
         let duration_get = start_get.elapsed();

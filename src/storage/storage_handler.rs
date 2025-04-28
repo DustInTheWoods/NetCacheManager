@@ -31,16 +31,16 @@ pub async fn handle_event(event: u8, tlvs: Vec<TlvField>, store: Arc<RamStore>) 
     }
 }
 
-pub fn get_tlv_value(tlvs: &[TlvField], type_id: u8) -> Option<&TlvField> {
-    tlvs.iter().find(|tlv| tlv.type_id as u8 == type_id)
+pub fn get_tlv_value(tlvs: &[TlvField], type_id: TlvFieldTypes) -> Option<&TlvField> {
+    tlvs.iter().find(|tlv| tlv.type_id == type_id)
 }
 
 pub async fn handle_set(tlvs: Vec<TlvField>, store: &Arc<RamStore>) -> Result<Vec<TlvField>, StorageError> {
-    let key = get_tlv_value(&tlvs, TlvFieldTypes::KEY as u8).ok_or(StorageError::InvalidInput)?;
-    let value = get_tlv_value(&tlvs, TlvFieldTypes::VALUE as u8).ok_or(StorageError::InvalidInput)?;
-    let group = get_tlv_value(&tlvs, TlvFieldTypes::GROUP as u8);
-    let compress = get_tlv_value(&tlvs, TlvFieldTypes::COMPRESS as u8);
-    let ttl = get_tlv_value(&tlvs, TlvFieldTypes::TTL as u8);
+    let key = get_tlv_value(&tlvs, TlvFieldTypes::KEY).ok_or(StorageError::InvalidInput)?;
+    let value = get_tlv_value(&tlvs, TlvFieldTypes::VALUE).ok_or(StorageError::InvalidInput)?;
+    let group = get_tlv_value(&tlvs, TlvFieldTypes::GROUP);
+    let compress = get_tlv_value(&tlvs, TlvFieldTypes::COMPRESS);
+    let ttl = get_tlv_value(&tlvs, TlvFieldTypes::TTL);
 
     let ttl_secs = ttl
         .and_then(|t| String::from_utf8(t.value.to_vec()).ok()?.parse::<u32>().ok())
@@ -64,7 +64,7 @@ pub async fn handle_set(tlvs: Vec<TlvField>, store: &Arc<RamStore>) -> Result<Ve
 }
 
 pub async fn handle_get(tlvs: Vec<TlvField>, store: &Arc<RamStore>) -> Result<Vec<TlvField>, StorageError> {
-    let key = get_tlv_value(&tlvs, TlvFieldTypes::KEY as u8).ok_or(StorageError::InvalidInput)?;
+    let key = get_tlv_value(&tlvs, TlvFieldTypes::KEY ).ok_or(StorageError::InvalidInput)?;
 
     if let Some(entry) = store.get(&key.value).await {
         Ok(vec![TlvField::new(TlvFieldTypes::VALUE, entry.value)])
@@ -74,9 +74,15 @@ pub async fn handle_get(tlvs: Vec<TlvField>, store: &Arc<RamStore>) -> Result<Ve
 }
 
 pub async fn handle_delete(tlvs: Vec<TlvField>, store: &Arc<RamStore>) -> Result<Vec<TlvField>, StorageError> {
-    let key = get_tlv_value(&tlvs, TlvFieldTypes::KEY as u8).ok_or(StorageError::InvalidInput)?;
-    store.delete(&key.value).await;
-    Ok(vec![])
+    if let Some(key) = get_tlv_value(&tlvs, TlvFieldTypes::KEY) {
+        store.delete(&key.value).await;
+        Ok(vec![])
+    } else if let Some(group) = get_tlv_value(&tlvs, TlvFieldTypes::GROUP) {
+        store.delete_by_group(&group.value).await;
+        Ok(vec![])
+    } else {
+        Err(StorageError::InvalidInput)
+    }
 }
 
 pub async fn handle_flush(store: &Arc<RamStore>) -> Result<Vec<TlvField>, StorageError> {
@@ -85,7 +91,7 @@ pub async fn handle_flush(store: &Arc<RamStore>) -> Result<Vec<TlvField>, Storag
 }
 
 pub async fn handle_touch(tlvs: Vec<TlvField>, store: &Arc<RamStore>) -> Result<Vec<TlvField>, StorageError> {
-    let key = get_tlv_value(&tlvs, TlvFieldTypes::KEY as u8).ok_or(StorageError::InvalidInput)?;
+    let key = get_tlv_value(&tlvs, TlvFieldTypes::KEY ).ok_or(StorageError::InvalidInput)?;
 
     if let Some(mut entry) = store.get(&key.value).await {
         entry.expires_at = Some(Instant::now() + Duration::from_secs(entry.ttl as u64));
@@ -97,7 +103,7 @@ pub async fn handle_touch(tlvs: Vec<TlvField>, store: &Arc<RamStore>) -> Result<
 }
 
 pub async fn handle_exists(tlvs: Vec<TlvField>, store: &Arc<RamStore>) -> Result<Vec<TlvField>, StorageError> {
-    let key = get_tlv_value(&tlvs, TlvFieldTypes::KEY as u8).ok_or(StorageError::InvalidInput)?;
+    let key = get_tlv_value(&tlvs, TlvFieldTypes::KEY ).ok_or(StorageError::InvalidInput)?;
 
     let exists = store.get(&key.value).await.is_some();
     let result_byte = if exists { 1 } else { 0 };
@@ -106,8 +112,8 @@ pub async fn handle_exists(tlvs: Vec<TlvField>, store: &Arc<RamStore>) -> Result
 }
 
 pub async fn handle_copy(tlvs: Vec<TlvField>, store: &Arc<RamStore>) -> Result<Vec<TlvField>, StorageError> {
-    let old_key = get_tlv_value(&tlvs, TlvFieldTypes::KEY as u8).ok_or(StorageError::InvalidInput)?;
-    let new_key = get_tlv_value(&tlvs, TlvFieldTypes::NewKey as u8).ok_or(StorageError::InvalidInput)?;
+    let old_key = get_tlv_value(&tlvs, TlvFieldTypes::KEY ).ok_or(StorageError::InvalidInput)?;
+    let new_key = get_tlv_value(&tlvs, TlvFieldTypes::NewKey ).ok_or(StorageError::InvalidInput)?;
 
     if let Some(entry) = store.get(&old_key.value).await {
         store.set(new_key.value.clone(), entry).await;
@@ -118,7 +124,7 @@ pub async fn handle_copy(tlvs: Vec<TlvField>, store: &Arc<RamStore>) -> Result<V
 }
 
 pub async fn handle_info(tlvs: Vec<TlvField>, store: &Arc<RamStore>) -> Result<Vec<TlvField>, StorageError> {
-    let key = get_tlv_value(&tlvs, TlvFieldTypes::KEY as u8).ok_or(StorageError::InvalidInput)?;
+    let key = get_tlv_value(&tlvs, TlvFieldTypes::KEY ).ok_or(StorageError::InvalidInput)?;
 
     if let Some(entry) = store.get(&key.value).await {
         let mut fields = vec![

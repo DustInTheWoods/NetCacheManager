@@ -12,11 +12,10 @@ use std::time::{Duration, Instant};
 mod tests {
     use super::*;
 
-    async fn send_request(event: u8, tlvs: Vec<TlvField>, addr: &str) -> Vec<u8> {
-        let mut stream = TcpStream::connect(addr)
-            .await
-            .expect("Verbindung fehlgeschlagen");
-
+    async fn send_request_stream<S>(stream: &mut S, event: u8, tlvs: Vec<TlvField>) -> Vec<u8>
+    where
+        S: AsyncWriteExt + AsyncReadExt + Unpin,
+    {
         let mut payload = BytesMut::new();
         for tlv in &tlvs {
             tlv.encode(&mut payload);
@@ -24,15 +23,16 @@ mod tests {
 
         let mut full_msg = vec![event];
         full_msg.extend_from_slice(&payload);
-
+    
         let len = (full_msg.len() as u32).to_be_bytes();
         stream.write_all(&len).await.unwrap();
         stream.write_all(&full_msg).await.unwrap();
-
+    
         let mut response = vec![0u8; 1024];
         let n = stream.read(&mut response).await.unwrap();
         response[..n].to_vec()
     }
+    
 
     fn extract_status(response: &[u8]) -> u8 {
         response[4]
@@ -59,21 +59,23 @@ mod tests {
 
     #[tokio::test]
     async fn test_basic() {
-        let addr = "127.0.0.1:8890";
+        let addr = "127.0.0.1:8787";
         setup_server(addr).await;
-
+    
+        let mut stream = TcpStream::connect(addr).await.expect("Verbindung fehlgeschlagen");
+    
         let key = b"test_key";
         let value = b"test_value";
-
-        let resp = send_request(0x20, vec![
-            TlvField::new(TlvFieldTypes::KEY , Bytes::from_static(key)),
-            TlvField::new(TlvFieldTypes::VALUE , Bytes::from_static(value)),
-        ], addr).await;
+    
+        let resp = send_request_stream(&mut stream, 0x20, vec![
+            TlvField::new(TlvFieldTypes::KEY, Bytes::from_static(key)),
+            TlvField::new(TlvFieldTypes::VALUE, Bytes::from_static(value)),
+        ]).await;
         assert_eq!(extract_status(&resp), 0x01);
-
-        let resp = send_request(0x21, vec![
-            TlvField::new(TlvFieldTypes::KEY , Bytes::from_static(key)),
-        ], addr).await;
+    
+        let resp = send_request_stream(&mut stream, 0x21, vec![
+            TlvField::new(TlvFieldTypes::KEY, Bytes::from_static(key)),
+        ]).await;
         assert_eq!(extract_status(&resp), 0x01);
     }
 
@@ -81,94 +83,126 @@ mod tests {
     async fn test_group() {
         let addr = "127.0.0.1:8891";
         setup_server(addr).await;
-
+    
+        let mut stream = TcpStream::connect(addr)
+            .await
+            .expect("Verbindung fehlgeschlagen");
+    
         let group = b"test_group";
-
+    
         for (k, v) in [("key1", "val1"), ("key2", "val2"), ("key3", "val3")] {
-            let resp = send_request(0x20, vec![
-                TlvField::new(TlvFieldTypes::KEY , Bytes::from_static(k.as_bytes())),
-                TlvField::new(TlvFieldTypes::VALUE , Bytes::from_static(v.as_bytes())),
-                TlvField::new(TlvFieldTypes::GROUP , Bytes::from_static(group)),
-            ], addr).await;
+            let resp = send_request_stream(&mut stream, 0x20, vec![
+                TlvField::new(TlvFieldTypes::KEY, Bytes::from_static(k.as_bytes())),
+                TlvField::new(TlvFieldTypes::VALUE, Bytes::from_static(v.as_bytes())),
+                TlvField::new(TlvFieldTypes::GROUP, Bytes::from_static(group)),
+            ]).await;
             assert_eq!(extract_status(&resp), 0x01);
         }
     }
+    
 
     #[tokio::test]
     async fn test_ttl() {
         let addr = "127.0.0.1:8892";
         setup_server(addr).await;
-
+    
+        let mut stream = TcpStream::connect(addr)
+            .await
+            .expect("Verbindung fehlgeschlagen");
+    
         let key = b"ttl_key";
         let value = b"short_lived";
-
-        send_request(0x20, vec![
-            TlvField::new(TlvFieldTypes::KEY , Bytes::from_static(key)),
-            TlvField::new(TlvFieldTypes::VALUE , Bytes::from_static(value)),
-            TlvField::new(TlvFieldTypes::TTL , Bytes::from_static(b"1")),
-        ], addr).await;
-
+    
+        // SET mit TTL
+        let _ = send_request_stream(&mut stream, 0x20, vec![
+            TlvField::new(TlvFieldTypes::KEY, Bytes::from_static(key)),
+            TlvField::new(TlvFieldTypes::VALUE, Bytes::from_static(value)),
+            TlvField::new(TlvFieldTypes::TTL, Bytes::from_static(b"1")),
+        ]).await;
+    
+        // Kurze Pause damit TTL abläuft
         tokio::time::sleep(Duration::from_secs(2)).await;
-
-        let resp = send_request(0x21, vec![
-            TlvField::new(TlvFieldTypes::KEY , Bytes::from_static(key)),
-        ], addr).await;
-        assert_eq!(extract_status(&resp), 0x02);
+    
+        // GET nach Ablauf
+        let resp = send_request_stream(&mut stream, 0x21, vec![
+            TlvField::new(TlvFieldTypes::KEY, Bytes::from_static(key)),
+        ]).await;
+    
+        assert_eq!(extract_status(&resp), 0x02, "Key sollte abgelaufen sein (NotFound)");
     }
+    
 
     #[tokio::test]
     async fn test_delete() {
         let addr = "127.0.0.1:8893";
         setup_server(addr).await;
-
+    
+        let mut stream = TcpStream::connect(addr)
+            .await
+            .expect("Verbindung fehlgeschlagen");
+    
         let key = b"delete_key";
         let value = b"to_be_deleted";
-
-        send_request(0x20, vec![
-            TlvField::new(TlvFieldTypes::KEY , Bytes::from_static(key)),
-            TlvField::new(TlvFieldTypes::VALUE , Bytes::from_static(value)),
-        ], addr).await;
-
-        send_request(0x22, vec![
-            TlvField::new(TlvFieldTypes::KEY , Bytes::from_static(key)),
-        ], addr).await;
-
-        let resp = send_request(0x21, vec![ 
-            TlvField::new(TlvFieldTypes::KEY , Bytes::from_static(key)),
-        ], addr).await;
-        assert_eq!(extract_status(&resp), 0x02);
+    
+        // SET
+        let _ = send_request_stream(&mut stream, 0x20, vec![
+            TlvField::new(TlvFieldTypes::KEY, Bytes::from_static(key)),
+            TlvField::new(TlvFieldTypes::VALUE, Bytes::from_static(value)),
+        ]).await;
+    
+        // DELETE
+        let _ = send_request_stream(&mut stream, 0x22, vec![
+            TlvField::new(TlvFieldTypes::KEY, Bytes::from_static(key)),
+        ]).await;
+    
+        // GET danach, sollte NotFound zurückgeben
+        let resp = send_request_stream(&mut stream, 0x21, vec![
+            TlvField::new(TlvFieldTypes::KEY, Bytes::from_static(key)),
+        ]).await;
+    
+        assert_eq!(extract_status(&resp), 0x02, "Key sollte nach Delete nicht mehr existieren");
     }
+    
 
     #[tokio::test]
     async fn test_performance() {
         let addr = "127.0.0.1:8894";
         setup_server(addr).await;
-
+    
         let value = Bytes::from_static(b"perfdata");
         let keys: Vec<String> = (0..1000).map(|i| format!("key{}", i)).collect();
+    
+        let mut stream = TcpStream::connect(addr)
+            .await
+            .expect("Verbindung fehlgeschlagen");
 
+        stream.set_nodelay(true).expect("Setze TCP_NODELAY fehlgeschlagen");
+    
         let start_set = Instant::now();
-        for k in keys.clone() {
-            let resp = send_request(0x20, vec![
-                TlvField::new(TlvFieldTypes::KEY , Bytes::from(k.clone())),
-                TlvField::new(TlvFieldTypes::VALUE , value.clone()),
-            ], addr).await;
-            assert_eq!(extract_status(&resp), 0x01);
+        for k in &keys {
+            let key_bytes = k.as_bytes().to_vec(); // <- Hier eine **echte Kopie** erzeugen
+            let resp = send_request_stream(&mut stream, 0x20, vec![
+                TlvField::new(TlvFieldTypes::KEY, Bytes::from(key_bytes)),
+                TlvField::new(TlvFieldTypes::VALUE, value.clone()),
+            ]).await;
+            assert_eq!(extract_status(&resp), 0x01, "SET sollte OK sein für {}", k);
         }
         let duration_set = start_set.elapsed();
-
+    
         let start_get = Instant::now();
-        for k in keys.clone() {
-            let resp = send_request(0x21, vec![
-                TlvField::new(TlvFieldTypes::KEY , Bytes::from(k.clone())),
-            ], addr).await;
-            assert_eq!(extract_status(&resp), 0x01);
+        for k in &keys {
+            let key_bytes = k.as_bytes().to_vec(); // <- Auch hier eine **echte Kopie** erzeugen
+            let resp = send_request_stream(&mut stream, 0x21, vec![
+                TlvField::new(TlvFieldTypes::KEY, Bytes::from(key_bytes)),
+            ]).await;
+            assert_eq!(extract_status(&resp), 0x01, "GET sollte OK sein für {}", k);
         }
         let duration_get = start_get.elapsed();
-
+    
         println!(
             "Performance test (via tcp connection): 1000 SETs in {:?}, 1000 GETs in {:?}",
             duration_set, duration_get
         );
     }
+    
 }

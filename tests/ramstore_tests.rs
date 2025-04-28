@@ -201,7 +201,7 @@ async fn test_count() {
     store.delete(&key_to_delete).await;
     assert_eq!(store.count().await, 4);
 
-    store.delete_group(&group).await;
+    store.delete_by_group(&group).await;
     assert_eq!(store.count().await, 0);
 }
 
