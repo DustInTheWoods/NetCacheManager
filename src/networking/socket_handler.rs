@@ -73,6 +73,8 @@ where
         let start_time = Instant::now();
         
         let msg_len = u32::from_be_bytes(len_buf) as usize;
+        debug!("Die Nachrichtenlänge beträgt: {} Bytes", msg_len);
+
         let mut msg_buf = vec![0u8; msg_len];
         if let Err(e) = stream.read_exact(&mut msg_buf).await {
             error!("Fehler beim Lesen der Nachricht: {}", e);
@@ -89,7 +91,7 @@ where
             Err(err) => ResponseBuilder::error(err),
         };
 
-        debug!("Zeit zur Verarbeitung der Anfrage: {:?}", Instant::now() - start_time);
+        debug!("Zeit zur Verarbeitung der Anfrage: {:?}. Sende Nachricht", Instant::now() - start_time);
 
         if let Err(e) = stream.write_all(&response).await {
             error!("Fehler beim Senden der Antwort: {}", e);
