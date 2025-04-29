@@ -6,6 +6,7 @@ use std::path::Path;
 pub struct Config {
     pub socket: SocketConfig,
     pub storage: StorageConfig,
+    //pub sync: Option<SyncConfig>, // Neuer optionaler Abschnitt für Synchronisierung
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -19,6 +20,14 @@ pub struct SocketConfig {
 pub struct StorageConfig {
     pub max_ram_size: usize,
     pub ttl_checktime: u64,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct SyncConfig {
+    pub enabled: bool,             // Synchronisierung aktivieren
+    pub server_addr: String,       // Adresse des Synchronisierungsservers
+    pub peers: Vec<String>,        // Liste der Peer-Adressen
+    pub sync_interval: u64,        // Synchronisierungsintervall in Sekunden
 }
 
 impl Config {

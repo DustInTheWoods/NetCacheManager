@@ -26,7 +26,7 @@ async fn main() {
     // 2. RAM-Store erstellen
     let store = Arc::new(RamStore::new(config.storage.clone())); 
     // (Optional) TTL-Cleaner starten
-    store.clone().start_ttl_cleaner().await;
+    store.clone().start_ttl_cleaner();
 
     // 3. Server starten mit Store
     info!("Starte NetCacheManager im {:?}-Modus", config.socket.mode);

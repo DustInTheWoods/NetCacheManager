@@ -10,6 +10,7 @@ pub enum TlvFieldTypes {
     VALUE = 0xA1,     
     GROUP = 0xA2,
     NewKey = 0xA3 ,
+    MessageId = 0xA4,
     COMPRESS = 0xB0,
     PERSISTENT = 0xB1,
     TTL = 0xB2,
@@ -18,6 +19,7 @@ pub enum TlvFieldTypes {
     DiskSize = 0xD1,
     RamKeyCount = 0xD2,
     RamSize= 0xD3,
+    Error = 0xFF,
 }
 
 impl TlvFieldTypes {
@@ -27,6 +29,7 @@ impl TlvFieldTypes {
             0xA1 => Some(Self::VALUE),
             0xA2 => Some(Self::GROUP),
             0xA3 => Some(Self::NewKey),
+            0xA4 => Some(Self::MessageId),
             0xB0 => Some(Self::COMPRESS),
             0xB1 => Some(Self::PERSISTENT),
             0xB2 => Some(Self::TTL),
@@ -35,6 +38,7 @@ impl TlvFieldTypes {
             0xD1 => Some(Self::DiskSize),
             0xD2 => Some(Self::RamKeyCount),
             0xD3 => Some(Self::RamSize),
+            0xFF => Some(Self::Error),
             _ => None,
         }
     }
