@@ -1,7 +1,6 @@
 //! TLV (Type-Length-Value) Protokollmodul
 
 use bytes::{Buf, BufMut, Bytes, BytesMut};
-use std::collections::HashMap;
 
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -20,6 +19,11 @@ pub enum TlvFieldTypes {
     RamKeyCount = 0xD2,
     RamSize= 0xD3,
     Error = 0xFF,
+    TIMESTAMP = 0xC5,
+    TTL_REMAINING = 0xC6,
+    IS_COMPRESSED = 0xC7,
+    IS_PERSISTENT = 0xC8,
+    HASH = 0xC9,
 }
 
 impl TlvFieldTypes {
@@ -39,6 +43,11 @@ impl TlvFieldTypes {
             0xD2 => Some(Self::RamKeyCount),
             0xD3 => Some(Self::RamSize),
             0xFF => Some(Self::Error),
+            0xC5 => Some(Self::TIMESTAMP),
+            0xC6 => Some(Self::TTL_REMAINING),
+            0xC7 => Some(Self::IS_COMPRESSED),
+            0xC8 => Some(Self::IS_PERSISTENT),
+            0xC9 => Some(Self::HASH),
             _ => None,
         }
     }

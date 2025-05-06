@@ -16,3 +16,6 @@ zstd-safe = "7.2.4"
 indexmap = "2.9.0"
 dashmap = "6.1.0"
 snap = "1"
+uuid = { version = "1", features = ["v4"] }
+chrono = "0.4"
+bincode = "1.3"

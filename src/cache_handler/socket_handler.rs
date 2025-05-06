@@ -1,9 +1,9 @@
 use bytes::{BufMut, Bytes, BytesMut};
 use crate::config::config::Config;
 use crate::protocol::tlv::{encode_tlv_fields, parse_tlv_fields, TlvField, TlvFieldTypes};
-use crate::storage::ram_handler::RamStore;
-use crate::storage::storage_handler::{handle_event, StorageError};
-use log::{debug, error, info};
+use crate::cache_handler::ram_handler::RamStore;
+use crate::cache_handler::storage_handler::{handle_event, StorageError};
+use log::{debug, error, info, warn};
 use std::sync::Arc;
 use std::time::Instant;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -11,52 +11,50 @@ use tokio::net::{TcpListener, TcpStream, UnixListener, UnixStream};
 use tokio::time::{timeout, Duration};
 
 pub async fn start_server(config: Config, store: Arc<RamStore>) {
+    info!("[start_server] Starte Server im Modus: {:?}", config.socket.mode);
     match config.socket.mode.as_str() {
         "unix" => {
             if let Some(path) = &config.socket.path {
                 let _ = std::fs::remove_file(path);
+                info!("[start_server] Binde Unix-Socket an Pfad: {}", path);
                 let listener = UnixListener::bind(path).expect("UnixSocket konnte nicht gebunden werden");
-                info!("Lausche auf Unix-Socket: {}", path);
+                info!("[start_server] Lausche auf Unix-Socket: {}", path);
                 loop {
                     let (stream, addr) = listener.accept().await.expect("Fehler beim Annehmen");
-
-                    info!("Neue Verbindung von: {:?}", addr);
-
-                    let store = store.clone(); // <- Store weiterreichen
-                    tokio::spawn(async move {
-                        handle_unix_client(stream, store).await;
-                    });
+                    info!("[start_server] Neue Verbindung von: {:?}", addr);
+                    let store = store.clone();
+                    tokio::spawn(handle_unix_client(stream, store));
                 }
             }
         }
         "tcp" => {
             if let Some(addr) = &config.socket.addr {
+                info!("[start_server] Binde TCP an Adresse: {}", addr);
                 let listener = TcpListener::bind(addr).await.expect("TCP konnte nicht gestartet werden");
-                info!("Lausche auf TCP-Adresse: {}", addr);
+                info!("[start_server] Lausche auf TCP-Adresse: {}", addr);
                 loop {
                     let (stream, addr) = listener.accept().await.expect("Fehler beim Annehmen");
-
-                    info!("Neue Verbindung von: {:?}", addr);
-
+                    info!("[start_server] Neue Verbindung von: {:?}", addr);
                     let store = store.clone();
-                    tokio::spawn(async move {
-                        handle_tcp_client(stream, store).await;
-                    });
+                    tokio::spawn(handle_tcp_client(stream, store));
                 }
             }
         }
-        _ => panic!("Unbekannter Socket-Modus: {}", config.socket.mode),
+        _ => {
+            error!("[start_server] Unbekannter Socket-Modus: {}", config.socket.mode);
+            panic!("Unbekannter Socket-Modus: {}", config.socket.mode)
+        },
     }
 }
 
 async fn handle_unix_client(stream: UnixStream, store: Arc<RamStore>) {
+    info!("[handle_unix_client] Starte Handler für Unix-Client");
     handle_client(stream, store).await;
 }
 
 async fn handle_tcp_client(stream: TcpStream, store: Arc<RamStore>) {
-    // TCP-Nodelay aktivieren
+    info!("[handle_tcp_client] Starte Handler für TCP-Client");
     stream.set_nodelay(true).expect("Setze TCP_NODELAY fehlgeschlagen");
-
     handle_client(stream, store).await;
 }
 
@@ -64,72 +62,75 @@ async fn handle_client<S>(mut stream: S, store: Arc<RamStore>)
 where
     S: AsyncReadExt + AsyncWriteExt + Unpin,
 {
+    info!("[handle_client] Starte Client-Handler (Thread: {:?})", std::thread::current().id());
     loop {
         let mut len_buf = [0u8; 4];
         if let Err(e) = stream.read_exact(&mut len_buf).await {
-            error!("Fehler beim Lesen der Nachrichtenlänge: {}", e);
-            break; // Verbindung wird beendet, wenn Client trennt oder Fehler
+            error!("[handle_client] Fehler beim Lesen der Nachrichtenlänge: {}", e);
+            break;
         }
-        // Gibt die einzelnen Bytes in Hex aus
-        debug!(
-            "Gelesene Bytes: {:02x} {:02x} {:02x} {:02x}",
-            len_buf[0], len_buf[1], len_buf[2], len_buf[3]
-        );
-
-        // Gibt die Länge in Hex aus
-        debug!("Gelesene Nachrichtenlänge: {:#04x}", u32::from_be_bytes(len_buf));
+        debug!("[handle_client] Gelesene Bytes für Länge: {:02x?}", len_buf);
+        let msg_len = u32::from_be_bytes(len_buf) as usize;
+        debug!("[handle_client] Nachrichtenlänge: {} Bytes", msg_len);
 
         let start_time = Instant::now();
-        
-        let msg_len = u32::from_be_bytes(len_buf) as usize;
-        debug!("Die Nachrichtenlänge beträgt: {} Bytes", msg_len);
 
         let mut msg_buf = vec![0u8; msg_len];
         let mut read = 0;
         while read < msg_len {
             match timeout(Duration::from_secs(6), stream.read(&mut msg_buf[read..])).await {
                 Ok(Ok(0)) => {
-                    error!("Verbindung vorzeitig geschlossen");
+                    error!("[handle_client] Verbindung vorzeitig geschlossen");
                     break;
                 }
                 Ok(Ok(n)) => {
+                    debug!("[handle_client] Gelesen: {} Bytes", n);
                     read += n;
                 }
                 Ok(Err(e)) => {
-                    error!("Fehler beim Lesen der Nachricht: {}", e);
+                    error!("[handle_client] Fehler beim Lesen der Nachricht: {}", e);
                     break;
                 }
                 Err(_) => {
-                    error!("Timeout beim Lesen der Nachricht überschritten");
+                    error!("[handle_client] Timeout beim Lesen der Nachricht überschritten");
                     break;
                 }
             }
         }
         if read != msg_len {
-            error!("Unerwartete Nachrichtenlänge: erwartet {}, gelesen {}", msg_len, read);
+            error!("[handle_client] Unerwartete Nachrichtenlänge: erwartet {}, gelesen {}", msg_len, read);
             break;
         }
 
         let event = msg_buf[0];
         let fields = parse_tlv_fields(Bytes::copy_from_slice(&msg_buf[1..]));
 
-        info!("Empfangenes Event: {:#04x}, {} TLVs", event, fields.len());
+        info!("[handle_client] Empfangenes Event: {:#04x}, {} TLVs: {:?}", event, fields.len(), fields);
 
         let response = match handle_event(event, fields.clone(), store.clone()).await {
-            Ok(tlvs) => ResponseBuilder::ok(Some(tlvs)),
-            Err(err) => ResponseBuilder::error(err, &fields),
+            Ok(tlvs) => {
+                info!("[handle_client] Event 0x{:02X} erfolgreich verarbeitet, sende OK-Antwort", event);
+                ResponseBuilder::ok(Some(tlvs))
+            },
+            Err(err) => {
+                error!("[handle_client] Fehler bei Event 0x{:02X}: {:?}", event, err);
+                ResponseBuilder::error(err, &fields)
+            },
         };
 
         debug!(
-            "Zeit zur Verarbeitung der Anfrage: {:?}. Sende Nachricht",
-            Instant::now() - start_time
+            "[handle_client] Zeit zur Verarbeitung der Anfrage: {:?}. Sende Antwort ({} Bytes)",
+            Instant::now() - start_time,
+            response.len()
         );
 
         if let Err(e) = stream.write_all(&response).await {
-            error!("Fehler beim Senden der Antwort: {}", e);
+            error!("[handle_client] Fehler beim Senden der Antwort: {}", e);
             break;
         }
+        info!("[handle_client] Antwort gesendet.");
     }
+    info!("[handle_client] Client-Handler beendet.");
 }
 
 struct ResponseBuilder;
@@ -138,6 +139,8 @@ impl ResponseBuilder {
     pub fn ok(tlvs: Option<Vec<TlvField>>) -> Vec<u8> {
         let tlv_data = tlvs.map_or(Bytes::new(), |fields| encode_tlv_fields(&fields));
         let total_len = 1 + tlv_data.len() as u32;
+
+        debug!("[ResponseBuilder::ok] Baue OK-Antwort mit {} TLV-Bytes", tlv_data.len());
 
         let mut buf = BytesMut::with_capacity(4 + total_len as usize);
         buf.put_u32(total_len);
@@ -153,6 +156,8 @@ impl ResponseBuilder {
             StorageError::AlreadyExists => (0x04, "Already Exists"),
             StorageError::InternalError => (0x05, "Internal Error"),
         };
+
+        warn!("[ResponseBuilder::error] Baue Fehler-Antwort: Status=0x{:02X}, Text='{}'", status, text);
 
         let mut tlvs = Vec::new();
 

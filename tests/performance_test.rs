@@ -1,7 +1,7 @@
 use netcache_manager::config::config::{Config, SocketConfig, StorageConfig};
-use netcache_manager::networking::socket_handler::start_server;
+use netcache_manager::cache_handler::socket_handler::start_server;
 use netcache_manager::protocol::tlv::{TlvField, TlvFieldTypes, parse_tlv_fields};
-use netcache_manager::storage::ram_handler::RamStore;
+use netcache_manager::cache_handler::ram_handler::RamStore;
 use bytes::{BytesMut, Bytes};
 use tokio::net::{UnixStream, TcpStream};
 use tokio::io::{AsyncWriteExt, AsyncReadExt};
@@ -40,6 +40,12 @@ async fn setup_unix_server(socket_path: &str) {
             max_ram_size: 512 * 1024 * 1024,
             ttl_checktime: 2,
         },
+        eventrelay: netcache_manager::config::config::EventRelayConfig {
+            mode: "tcp".to_string(),
+            addr: Some("127.0.0.1:9999".to_string()),
+            path: None,
+        },
+        sync: None,
     };
     let store = Arc::new(RamStore::new(config.storage.clone()));
     tokio::spawn(start_server(config, store));
@@ -61,6 +67,12 @@ async fn setup_tcp_server(addr: &str) {
             max_ram_size: 512 * 1024 * 1024,
             ttl_checktime: 2,
         },
+        eventrelay: netcache_manager::config::config::EventRelayConfig {
+            mode: "tcp".to_string(),
+            addr: Some("127.0.0.1:9999".to_string()),
+            path: None,
+        },
+        sync: None,
     };
     let store = Arc::new(RamStore::new(config.storage.clone()));
     tokio::spawn(start_server(config, store));
@@ -178,16 +190,19 @@ where
 
 #[tokio::test]
 async fn test_performance_unix() {
+    let _ = env_logger::builder().is_test(true).try_init();
     perf_test_unix("/tmp/test_unix_perf.sock").await;
 }
 
 #[tokio::test]
 async fn test_performance_tcp() {
+    let _ = env_logger::builder().is_test(true).try_init();
     perf_test_tcp("127.0.0.1:8787").await;
 }
 
 #[tokio::test]
 async fn test_parallel_set_get() {
+    let _ = env_logger::builder().is_test(true).try_init();
     let addr = "127.0.0.1:8788";
     setup_tcp_server(addr).await;
     let n_clients = 20;
@@ -225,6 +240,7 @@ async fn test_parallel_set_get() {
 
 #[tokio::test]
 async fn test_mass_delete() {
+    let _ = env_logger::builder().is_test(true).try_init();
     let addr = "127.0.0.1:8789";
     setup_tcp_server(addr).await;
     let mut client = TcpStream::connect(addr).await.unwrap();

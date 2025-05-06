@@ -1,7 +1,7 @@
 use netcache_manager::config::config::{Config, SocketConfig, StorageConfig};
-use netcache_manager::networking::socket_handler::start_server;
+use netcache_manager::cache_handler::socket_handler::start_server;
 use netcache_manager::protocol::tlv::{TlvField, TlvFieldTypes};
-use netcache_manager::storage::ram_handler::RamStore;
+use netcache_manager::cache_handler::ram_handler::RamStore;
 use bytes::{BytesMut, Bytes};
 use tokio::net::TcpStream;
 use tokio::io::{AsyncWriteExt, AsyncReadExt};
@@ -77,6 +77,12 @@ mod tests {
                 max_ram_size: 100 * 1024 * 1024,
                 ttl_checktime: 5,
             },
+            eventrelay: netcache_manager::config::config::EventRelayConfig {
+                mode: "tcp".to_string(),
+                addr: Some("127.0.0.1:9999".to_string()),
+                path: None,
+            },
+            sync: None,
         };
 
         let store = Arc::new(RamStore::new(config.storage.clone()));
@@ -87,6 +93,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_set_and_get() {
+        let _ = env_logger::builder().is_test(true).try_init();
+
         let addr = "127.0.0.1:8787";
         setup_server(addr).await;
 
@@ -139,6 +147,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_ttl_expiry() {
+        let _ = env_logger::builder().is_test(true).try_init();
+
         let addr = "127.0.0.1:8892";
         setup_server(addr).await;
 
@@ -171,6 +181,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_delete_key() {
+        let _ = env_logger::builder().is_test(true).try_init();
+
         let addr = "127.0.0.1:8893";
         setup_server(addr).await;
 
@@ -207,6 +219,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_ping_pong() {
+        let _ = env_logger::builder().is_test(true).try_init();
+
         let addr = "127.0.0.1:8895";
         setup_server(addr).await;
 
@@ -225,6 +239,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_group_query() {
+        let _ = env_logger::builder().is_test(true).try_init();
+
         let addr = "127.0.0.1:8896";
         setup_server(addr).await;
 
@@ -302,6 +318,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_info() {
+        let _ = env_logger::builder().is_test(true).try_init();
+
         let addr = "127.0.0.1:8901";
         setup_server(addr).await;
 
@@ -331,6 +349,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_copy_key() {
+        let _ = env_logger::builder().is_test(true).try_init();
+
         let addr = "127.0.0.1:8900";
         setup_server(addr).await;
 
@@ -370,6 +390,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_touch() {
+        let _ = env_logger::builder().is_test(true).try_init();
+
         let addr = "127.0.0.1:8899";
         setup_server(addr).await;
 
@@ -409,6 +431,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_touch_without_ttl() {
+        let _ = env_logger::builder().is_test(true).try_init();
+
         let addr = "127.0.0.1:8894";
         setup_server(addr).await;
 
@@ -437,6 +461,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_flush() {
+        let _ = env_logger::builder().is_test(true).try_init();
+
         let addr = "127.0.0.1:8898";
         setup_server(addr).await;
 
@@ -469,6 +495,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_exists_key() {
+        let _ = env_logger::builder().is_test(true).try_init();
+
         let addr = "127.0.0.1:8897";
         setup_server(addr).await;
 
@@ -497,6 +525,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_overwrite_existing_key() {
+        let _ = env_logger::builder().is_test(true).try_init();
+
         let addr = "127.0.0.1:8910";
         setup_server(addr).await;
 
@@ -529,6 +559,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_delete_nonexistent_key() {
+        let _ = env_logger::builder().is_test(true).try_init();
+
         let addr = "127.0.0.1:8911";
         setup_server(addr).await;
 
@@ -546,6 +578,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_exists_group() {
+        let _ = env_logger::builder().is_test(true).try_init();
+
         let addr = "127.0.0.1:8912";
         setup_server(addr).await;
 
@@ -572,6 +606,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_info_nonexistent_key() {
+        let _ = env_logger::builder().is_test(true).try_init();
+
         let addr = "127.0.0.1:8913";
         setup_server(addr).await;
 
@@ -588,6 +624,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_delete_group() {
+        let _ = env_logger::builder().is_test(true).try_init();
+
         let addr = "127.0.0.1:8914";
         setup_server(addr).await;
 
@@ -625,6 +663,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_flush_removes_groups() {
+        let _ = env_logger::builder().is_test(true).try_init();
+
         let addr = "127.0.0.1:8915";
         setup_server(addr).await;
 

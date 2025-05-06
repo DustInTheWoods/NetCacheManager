@@ -10,7 +10,16 @@ max_ram_size = 104857600    # maximale ram größe in Bytes
 ttl_checktime = 5          # Wartezeit zwischen den ttl checks
 
 [sync]
-enabled = true                  # Synchronisierung aktivieren (true/false)
-server_addr = "127.0.0.1:9000"  # Adresse des Synchronisierungsservers
-peers = ["127.0.0.1:9001", "127.0.0.1:9002"] # Liste der Peer-Adressen
-sync_interval = 10              # Synchronisierungsintervall in Sekunden
+enabled = true
+server_addr = "tcp://192.168.1.10:9000" # Eigene Adresse
+peers = [
+  "tcp://192.168.1.10:9000",
+  "tcp://192.168.1.11:9000",
+  "tcp://192.168.1.12:9000"
+]
+sync_interval = 10 # Sekunden
+
+[eventrelay]
+mode = "tcp"                # "tcp" oder "unix"
+addr = "127.0.0.1:9797"      # TCP-Adresse für EventRelay
+path = "/tmp/eventrelay.sock" # Pfad für Unix-Socket (nur bei mode = "unix")

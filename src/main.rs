@@ -2,13 +2,14 @@
 
 mod config;
 mod protocol;
-mod networking;
-mod storage;
+mod cache_handler;
+mod eventrelay;
 
 use config::config::Config;
-use networking::socket_handler::start_server;
+use cache_handler::socket_handler::start_server;
+use eventrelay::eventrelay::EventRelay;
 use log::{debug, info};
-use storage::ram_handler::RamStore;
+use cache_handler::ram_handler::RamStore;
 use std::{env, sync::Arc};
 
 #[tokio::main]
@@ -28,7 +29,17 @@ async fn main() {
     // (Optional) TTL-Cleaner starten
     store.clone().start_ttl_cleaner();
 
-    // 3. Server starten mit Store
+    // 3. EventRelay parallel starten
+    let eventrelay = Arc::new(EventRelay::new());
+    let eventrelay_config = config.eventrelay.clone();
+    tokio::spawn({
+        let eventrelay = eventrelay.clone();
+        async move {
+            eventrelay.start_server(&eventrelay_config).await;
+        }
+    });
+
+    // 4. Server starten mit Store
     info!("Starte NetCacheManager im {:?}-Modus", config.socket.mode);
     start_server(config, store).await;
 }

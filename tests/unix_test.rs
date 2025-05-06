@@ -1,9 +1,9 @@
 #[cfg(test)]
 mod tests {
     use netcache_manager::config::config::{Config, SocketConfig, StorageConfig};
-    use netcache_manager::networking::socket_handler::start_server;
+    use netcache_manager::cache_handler::socket_handler::start_server;
     use netcache_manager::protocol::tlv::{TlvField, TlvFieldTypes, parse_tlv_fields};
-    use netcache_manager::storage::ram_handler::RamStore;
+    use netcache_manager::cache_handler::ram_handler::RamStore;
     use bytes::{BytesMut, Bytes};
     use tokio::net::UnixStream;
     use tokio::io::{AsyncWriteExt, AsyncReadExt};
@@ -84,6 +84,12 @@ mod tests {
                 max_ram_size: 100 * 1024 * 1024,
                 ttl_checktime: 2,
             },
+            eventrelay: netcache_manager::config::config::EventRelayConfig {
+                mode: "unix".to_string(),
+                addr: None,
+                path: Some("/tmp/dummy.sock".to_string()),
+            },
+            sync: None,
         };
 
         let store = Arc::new(RamStore::new(config.storage.clone()));
@@ -98,6 +104,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_set_and_get() {
+        let _ = env_logger::builder().is_test(true).try_init();
         let socket = "/tmp/test_unix_setget.sock";
         setup_server(socket).await;
         let mut client = TestClient::connect(socket).await;
@@ -119,6 +126,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_ttl_expiry() {
+        let _ = env_logger::builder().is_test(true).try_init();
         let socket = "/tmp/test_unix_ttl.sock";
         setup_server(socket).await;
         let mut client = TestClient::connect(socket).await;
@@ -143,6 +151,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_delete_key() {
+        let _ = env_logger::builder().is_test(true).try_init();
         let socket = "/tmp/test_unix_delete.sock";
         setup_server(socket).await;
         let mut client = TestClient::connect(socket).await;
@@ -169,6 +178,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_ping_pong() {
+        let _ = env_logger::builder().is_test(true).try_init();
         let socket = "/tmp/test_unix_ping.sock";
         setup_server(socket).await;
         let mut client = TestClient::connect(socket).await;
@@ -186,6 +196,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_group_query() {
+        let _ = env_logger::builder().is_test(true).try_init();
         let socket = "/tmp/test_unix_group.sock";
         setup_server(socket).await;
         let mut client = TestClient::connect(socket).await;
@@ -219,6 +230,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_info() {
+        let _ = env_logger::builder().is_test(true).try_init();
         let socket = "/tmp/test_unix_info.sock";
         setup_server(socket).await;
         let mut client = TestClient::connect(socket).await;
@@ -241,6 +253,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_copy_key() {
+        let _ = env_logger::builder().is_test(true).try_init();
         let socket = "/tmp/test_unix_copy.sock";
         setup_server(socket).await;
         let mut client = TestClient::connect(socket).await;
@@ -270,6 +283,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_touch() {
+        let _ = env_logger::builder().is_test(true).try_init();
         let socket = "/tmp/test_unix_touch.sock";
         setup_server(socket).await;
         let mut client = TestClient::connect(socket).await;
@@ -299,6 +313,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_touch_without_ttl() {
+        let _ = env_logger::builder().is_test(true).try_init();
         let socket = "/tmp/test_unix_touch_no_ttl.sock";
         setup_server(socket).await;
         let mut client = TestClient::connect(socket).await;
@@ -320,6 +335,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_flush() {
+        let _ = env_logger::builder().is_test(true).try_init();
         let socket = "/tmp/test_unix_flush.sock";
         setup_server(socket).await;
         let mut client = TestClient::connect(socket).await;
@@ -344,6 +360,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_exists_key() {
+        let _ = env_logger::builder().is_test(true).try_init();
         let socket = "/tmp/test_unix_exists_key.sock";
         setup_server(socket).await;
         let mut client = TestClient::connect(socket).await;
@@ -365,6 +382,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_overwrite_existing_key() {
+        let _ = env_logger::builder().is_test(true).try_init();
         let socket = "/tmp/test_unix_overwrite.sock";
         setup_server(socket).await;
         let mut client = TestClient::connect(socket).await;
@@ -393,6 +411,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_delete_nonexistent_key() {
+        let _ = env_logger::builder().is_test(true).try_init();
         let socket = "/tmp/test_unix_delete_nonexist.sock";
         setup_server(socket).await;
         let mut client = TestClient::connect(socket).await;
@@ -407,6 +426,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_exists_group() {
+        let _ = env_logger::builder().is_test(true).try_init();
         let socket = "/tmp/test_unix_exists_group.sock";
         setup_server(socket).await;
         let mut client = TestClient::connect(socket).await;
@@ -430,6 +450,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_info_nonexistent_key() {
+        let _ = env_logger::builder().is_test(true).try_init();
         let socket = "/tmp/test_unix_info_nonexist.sock";
         setup_server(socket).await;
         let mut client = TestClient::connect(socket).await;
@@ -444,6 +465,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_delete_group() {
+        let _ = env_logger::builder().is_test(true).try_init();
         let socket = "/tmp/test_unix_delete_group.sock";
         setup_server(socket).await;
         let mut client = TestClient::connect(socket).await;
@@ -477,6 +499,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_flush_removes_groups() {
+        let _ = env_logger::builder().is_test(true).try_init();
         let socket = "/tmp/test_unix_flush_groups.sock";
         setup_server(socket).await;
         let mut client = TestClient::connect(socket).await;
