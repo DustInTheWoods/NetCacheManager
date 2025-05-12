@@ -11,11 +11,11 @@ ttl_checktime = 5          # Wartezeit zwischen den ttl checks
 
 [sync]
 enabled = true
-server_addr = "192.168.178.35:9000" # Eigene Adresse
+server_addr = "127.0.0.1:9000" # Eigene Adresse
 peers = [
-  "192.168.178.35:9000",
-  "192.168.178.35:9001",
-  "192.168.178.35:9002",
+  "127.0.0.1:9000",
+  "127.0.0.1:9001",
+  "127.0.0.1:9002",
 ]
 sync_interval = 10 # Sekunden
 

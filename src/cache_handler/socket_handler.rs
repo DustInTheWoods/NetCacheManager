@@ -1,11 +1,10 @@
-use bincode::de;
-use bytes::{BufMut, Bytes, BytesMut};
+use bytes::Bytes;
 use crate::config::config::Config;
-use crate::protocol::tlv::{encode_tlv_fields, parse_tlv_fields, TlvField, TlvFieldTypes};
+use crate::protocol::tlv::{TlvField, TlvFieldTypes, serialize_message, read_message};
 use crate::cache_handler::ram_handler::RamStore;
 use crate::cache_handler::storage_handler::{handle_event, StorageError};
 use crate::replication_layer::Replication;
-use log::{debug, error, info, warn};
+use log::{error, info, warn};
 use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream, UnixListener, UnixStream};
@@ -68,41 +67,24 @@ async fn handle_client<S>(mut stream: S, store: Arc<RamStore>, sync_manager: Opt
 where
     S: AsyncReadExt + AsyncWriteExt + Unpin + Send + 'static,
 {
-    info!("[handle_client] Starte Client-Handler (Thread: {:?})", std::thread::current().id());
+    info!("[handle_client] Starte Client-Handler");
     loop {
-        let mut len_buf = [0u8; 4];
-        if let Err(e) = stream.read_exact(&mut len_buf).await {
-            error!("[handle_client] Fehler beim Lesen der Nachrichtenlänge: {}", e);
-            break;
-        }
+        let msg = match read_message(&mut stream).await {
+            Ok((event, fields)) => (event, fields),
+            Err(e) => {
+                error!("[handle_client] Fehler beim Lesen der Nachricht: {}", e);
+                break;
+            }
+        };
+        let (event, fields) = msg;
 
-        // Überprüfen, ob die Länge 0 ist (Verbindung geschlossen)
-        if len_buf == [0, 0, 0, 0] {
-            info!("[handle_client] Verbindung geschlossen (Länge 0)");
-            break;
-        }
-
-        debug!("[handle_client] Gelesene Nachrichtenlänge: {:?}", len_buf);
-
-        let msg_len = u32::from_be_bytes(len_buf) as usize;
-        let mut msg_buf = vec![0u8; msg_len];
-        if let Err(e) = stream.read_exact(&mut msg_buf).await {
-            error!("[handle_client] Fehler beim Lesen der Nachricht: {}", e);
-            break;
-        }
-
-        let full_packet = [&len_buf[..], &msg_buf[..]].concat();
-
-        // Sync-Weiterleitung: Wenn SyncManager vorhanden, leite an Master/Slaves weiter
         if let Some(sync_manager) = &sync_manager {
             info!("[handle_client] Leite Nachricht an SyncManager weiter");
-            if let Err(e) = sync_manager.sync_message(&full_packet).await {
+            if let Err(e) = sync_manager.sync_message(event, &fields).await {
                 warn!("[handle_client] Sync-Weiterleitung fehlgeschlagen: {}", e);
             }
         }
 
-        let event = msg_buf[0];
-        let fields = parse_tlv_fields(Bytes::copy_from_slice(&msg_buf[1..]));
         let response = match handle_event(event, fields.clone(), store.clone()).await {
             Ok(tlvs) => ResponseBuilder::ok(Some(tlvs)),
             Err(err) => ResponseBuilder::error(err, &fields),
@@ -119,16 +101,9 @@ struct ResponseBuilder;
 
 impl ResponseBuilder {
     pub fn ok(tlvs: Option<Vec<TlvField>>) -> Vec<u8> {
-        let tlv_data = tlvs.map_or(Bytes::new(), |fields| encode_tlv_fields(&fields));
-        let total_len = 1 + tlv_data.len() as u32;
-
-        debug!("[ResponseBuilder::ok] Baue OK-Antwort mit {} TLV-Bytes", tlv_data.len());
-
-        let mut buf = BytesMut::with_capacity(4 + total_len as usize);
-        buf.put_u32(total_len);
-        buf.put_u8(0x01); // STATUS_OK
-        buf.extend_from_slice(&tlv_data);
-        buf.to_vec()
+        // Nutze serialize_message für Antwort
+        let tlvs = tlvs.unwrap_or_default();
+        serialize_message(0x01, &tlvs).to_vec()
     }
 
     pub fn error(err: StorageError, req_tlvs: &[TlvField]) -> Vec<u8> {
@@ -142,22 +117,12 @@ impl ResponseBuilder {
         warn!("[ResponseBuilder::error] Baue Fehler-Antwort: Status=0x{:02X}, Text='{}'", status, text);
 
         let mut tlvs = Vec::new();
-
         // MESSAGE_ID aus Request-TLVs extrahieren
         if let Some(msg_id) = req_tlvs.iter().find(|tlv| tlv.type_id == TlvFieldTypes::MessageId) {
             tlvs.push(TlvField::new(TlvFieldTypes::MessageId, msg_id.value.clone()));
         }
-
         // ERROR-TLV anhängen
         tlvs.push(TlvField::new(TlvFieldTypes::Error, Bytes::from_static(text.as_bytes())));
-
-        let tlv_data = encode_tlv_fields(&tlvs);
-        let total_len = 1 + tlv_data.len() as u32;
-
-        let mut buf = BytesMut::with_capacity(4 + total_len as usize);
-        buf.put_u32(total_len);
-        buf.put_u8(status);
-        buf.extend_from_slice(&tlv_data);
-        buf.to_vec()
+        serialize_message(status, &tlvs).to_vec()
     }
 }

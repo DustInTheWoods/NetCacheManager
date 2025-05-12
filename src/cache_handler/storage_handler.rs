@@ -151,21 +151,17 @@ pub async fn handle_touch(tlvs: Vec<TlvField>, store: &Arc<RamStore>) -> Result<
     let message_id = get_tlv_value(&tlvs, TlvFieldTypes::MessageId).ok_or(StorageError::InvalidInput)?;
     let key = get_tlv_value(&tlvs, TlvFieldTypes::KEY).ok_or(StorageError::InvalidInput)?;
 
-    if let Some(mut entry) = store.get(&key.value) {
-        if entry.ttl == 0 {
-            warn!("[handle_touch] Key {:?} hat keine TTL, TOUCH nicht möglich!", key.value);
-            return Err(StorageError::InvalidInput);
+    match store.touch(&key.value) {
+        Ok(()) => {
+            info!("[handle_touch] TOUCH erfolgreich für Key: {:?}", key.value);
+            Ok(vec![
+                TlvField::new(TlvFieldTypes::MessageId, message_id.value.clone())
+            ])
         }
-        entry.expires_at = Some(Instant::now() + Duration::from_secs(entry.ttl as u64));
-        debug!("[handle_touch] Aktualisiere expires_at für Key {:?} auf {:?}", key.value, entry.expires_at);
-        store.set(key.value.clone(), entry);
-        info!("[handle_touch] TOUCH erfolgreich für Key: {:?}", key.value);
-        Ok(vec![
-            TlvField::new(TlvFieldTypes::MessageId, message_id.value.clone())
-        ])
-    } else {
-        warn!("[handle_touch] Key nicht gefunden: {:?}", key.value);
-        Err(StorageError::NotFound)
+        Err(()) => {
+            warn!("[handle_touch] TOUCH fehlgeschlagen für Key: {:?}", key.value);
+            Err(StorageError::NotFound)
+        }
     }
 }
 
@@ -260,4 +256,66 @@ pub async fn handle_sysinfo(tlvs: Vec<TlvField>, store: &Arc<RamStore>) -> Resul
 pub async fn handle_ping(_: Vec<TlvField>) -> Result<Vec<TlvField>, StorageError> {
     info!("[handle_ping] PING empfangen, sende leere Antwort zurück.");
     Ok(vec![])
+}
+
+/// Verarbeitet ein Sync-Event (z.B. SYNC_SET, SYNC_DELETE, SYNC_TOUCH, ...)
+pub async fn handle_sync_event(event: u8, tlvs: Vec<TlvField>, store: &Arc<RamStore>) {
+    match event {
+        0x80 => {
+            // SYNC_SET: Key/Value-Update
+            let _ = handle_set(tlvs, store).await;
+            info!("[handle_sync_event] SYNC_SET: Key/Value-Update erfolgreich!");
+        }
+        0x81 => {
+            // SYNC_DELETE: Key löschen
+            let _ = handle_delete(tlvs, store).await;
+            info!("[handle_sync_event] SYNC_DELETE: Key gelöscht!");
+        }
+        0x82 => {
+            // SYNC_TOUCH: TTL verlängern
+            let _ = handle_touch(tlvs, store).await;
+            info!("[handle_sync_event] SYNC_TOUCH: TTL verlängert!");
+        }
+        0x83 => {
+            // SYNC_FLUSH oder SYNC_SNAPSHOT: Unterscheide an der TLV-Länge
+            if tlvs.is_empty() {
+                // SYNC_FLUSH: Löscht den gesamten Speicher auf dem Slave
+                store.flush();
+                info!("[handle_sync_event] SYNC_FLUSH: RAM-Store auf Slave komplett geleert!");
+            } else {
+                // SYNC_SNAPSHOT: Importiere alle Key/Value-Paare
+                store.flush();
+                let mut key: Option<bytes::Bytes> = None;
+                for tlv in tlvs {
+                    use crate::protocol::tlv::TlvFieldTypes;
+                    match tlv.type_id {
+                        TlvFieldTypes::KEY => key = Some(tlv.value),
+                        TlvFieldTypes::VALUE => {
+                            if let Some(k) = key.take() {
+                                let entry = super::ram_handler::Entry {
+                                    key: k.clone(),
+                                    value: tlv.value,
+                                    group: None,
+                                    expires_at: None,
+                                    compressed: false,
+                                    ttl: 0,
+                                    timestamp: 0,
+                                };
+                                store.set(k, entry);
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                info!("[handle_sync_event] SYNC_SNAPSHOT: {} Einträge importiert!", store.count());
+            }
+        }
+        0x84 => {
+            // SYNC_CONFLICT: Konfliktbehandlung (optional)
+            // TODO: Implementiere Konflikt-Logik
+        }
+        _ => {
+            warn!("[handle_sync_event] Unbekanntes Sync-Event: 0x{:02X}", event);
+        }
+    }
 }

@@ -28,7 +28,6 @@ Jede Nachricht besteht aus:
 - Ist die Ziel-UUID nicht verbunden, wird die Nachricht verworfen (kein Queueing, keine Rückmeldung).
 
 ## Fehlerfälle und Fehlercodes
-
 Fehlernachrichten haben das gleiche Format wie normale Nachrichten:
 ```
 [LEN:4][TO_UUID:16][FROM_UUID:16][PAYLOAD:LEN-32]
@@ -43,9 +42,6 @@ Fehlernachrichten haben das gleiche Format wie normale Nachrichten:
 - 0x00000003: Nachricht zu kurz/ungültiges Format
 - 0x00000004: Nicht autorisiert (z.B. Nachricht vor Auth)
 - 0x00000005: Ziel-UUID nicht verbunden
-- 0x00000006: Interner Serverfehler
-
-Nach einem kritischen Fehler (z.B. Authentifizierungsfehler) wird die Verbindung geschlossen.
 
 ## Beispiel
 **Broadcast:**
@@ -66,10 +62,6 @@ Nach einem kritischen Fehler (z.B. Authentifizierungsfehler) wird die Verbindung
 - Latenzoptimiert: Nachrichten werden direkt weitergeleitet.
 - Keine Verschlüsselung oder ACLs.
 
-## Fehlerfälle
-- Ungültige oder doppelte UUID: Verbindung wird sofort geschlossen.
-- Nachrichten an nicht verbundene UUIDs werden verworfen.
-
 ---
 
-**Letzte Aktualisierung:** 30.04.2025
+**Letzte Aktualisierung:** 12.05.2025

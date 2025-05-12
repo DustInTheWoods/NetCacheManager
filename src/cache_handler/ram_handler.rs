@@ -227,8 +227,24 @@ impl RamStore {
                     debug!("[TTL-Cleaner] Entferne abgelaufenen Key: {:?}", key);
                     this.delete(&key);
                 }
-                debug!("[TTL-Cleaner] Durchlauf beendet. Nächster Check in {}s", this.ttl_checktime);
+                //debug!("[TTL-Cleaner] Durchlauf beendet. Nächster Check in {}s", this.ttl_checktime);
             }
         });
+    }
+
+    pub fn touch(&self, key: &[u8]) -> Result<(), ()> {
+        let key = Bytes::copy_from_slice(key);
+        if let Some(mut entry) = self.data.get(&key) {
+            if entry.ttl == 0 {
+                warn!("[RamStore::touch] Key hat keine TTL: {:?}", key);
+                return Err(());
+            }
+            let mut entry = entry.clone();
+            entry.expires_at = Some(Instant::now() + Duration::from_secs(entry.ttl as u64));
+            self.set(key, entry);
+            Ok(())
+        } else {
+            Err(())
+        }
     }
 }

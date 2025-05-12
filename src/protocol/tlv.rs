@@ -112,3 +112,32 @@ pub fn encode_tlv_fields(fields: &[TlvField]) -> Bytes {
     }
     buf.freeze()
 }
+
+/// Serialisiert eine Nachricht im Format [LENGTH (4 bytes)][EVENT (1 byte)][TLV fields...]
+pub fn serialize_message(event: u8, tlvs: &[TlvField]) -> bytes::Bytes {
+    use bytes::BufMut;
+    let tlv_bytes = encode_tlv_fields(tlvs);
+    let total_len = 1 + tlv_bytes.len(); // 1 Byte Event + TLVs
+    let mut buf = BytesMut::with_capacity(4 + total_len);
+    buf.put_u32(total_len as u32);
+    buf.put_u8(event);
+    buf.extend_from_slice(&tlv_bytes);
+    buf.freeze()
+}
+
+/// Liest eine Nachricht im Format [LENGTH (4 bytes)][EVENT (1 byte)][TLV fields...]
+pub async fn read_message<R: tokio::io::AsyncRead + Unpin>(reader: &mut R) -> std::io::Result<(u8, Vec<TlvField>)> {
+    use tokio::io::AsyncReadExt;
+    let mut len_buf = [0u8; 4];
+    reader.read_exact(&mut len_buf).await?;
+    let msg_len = u32::from_be_bytes(len_buf) as usize;
+    if msg_len < 1 {
+        return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "Message length < 1"));
+    }
+    let mut msg_buf = vec![0u8; msg_len];
+    reader.read_exact(&mut msg_buf).await?;
+    let event = msg_buf[0];
+    let tlv_bytes = bytes::Bytes::copy_from_slice(&msg_buf[1..]);
+    let tlvs = parse_tlv_fields(tlv_bytes);
+    Ok((event, tlvs))
+}

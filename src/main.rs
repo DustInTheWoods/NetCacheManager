@@ -50,6 +50,7 @@ async fn main() {
                 sync_cfg.peers.clone(),
                 sync_cfg.sync_interval,
                 sync_cfg.sync_timeout.unwrap_or(sync_cfg.sync_interval * 3),
+                store.clone(),
             );
             tokio::spawn(manager.clone().start());
             sync_manager = Some(manager);

@@ -90,24 +90,33 @@ impl EventRelay {
         }
     }
 
+    /// Handler für einen neuen TCP-Client
+    async fn handle_client_tcp(self: Arc<Self>, stream: TcpStream) {
+        let (read, write) = tokio::io::split(stream);
+        self.handle_client(read, write).await;
+    }
+
+    /// Handler für einen neuen Unix-Client
+    async fn handle_client_unix(self: Arc<Self>, stream: UnixStream) {
+        let (read, write) = tokio::io::split(stream);
+        self.handle_client(read, write).await;
+    }
+
     async fn handle_client<S>(self: Arc<Self>, mut read: ReadHalf<S>, mut write: WriteHalf<S>)
     where
         S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
     {
         // 1. UUID lesen (16 Byte)
         let mut uuid_buf = [0u8; 16];
-        let n = match read.read(&mut uuid_buf).await {
-            Ok(n) => n,
-            Err(e) => {
-                error!("[EventRelay] Fehler beim Lesen der UUID: {}", e);
-                let err_msg = build_error_msg(&Uuid::nil(), 0x00000001, "Ungültige UUID (Lesefehler)");
-                let _ = write.write_all(&err_msg).await;
-                let _ = write.flush().await;
-                return;
-            }
-        };
-        if n < 16 {
-            error!("[EventRelay] UUID zu kurz: nur {} Bytes empfangen", n);
+        if let Err(e) = read.read_exact(&mut uuid_buf).await {
+            error!("[EventRelay] Fehler beim Lesen der UUID: {}", e);
+            let err_msg = build_error_msg(&Uuid::nil(), 0x00000001, "Ungültige UUID (Lesefehler)");
+            let _ = write.write_all(&err_msg).await;
+            let _ = write.flush().await;
+            return;
+        }
+        if uuid_buf.len() < 16 {
+            error!("[EventRelay] UUID zu kurz: nur {} Bytes empfangen", uuid_buf.len());
             let err_msg = build_error_msg(&Uuid::nil(), 0x00000001, "Ungültige UUID (zu kurz)");
             let _ = write.write_all(&err_msg).await;
             let _ = write.flush().await;
@@ -227,17 +236,5 @@ impl EventRelay {
             clients.remove(&uuid);
         }
         info!("[EventRelay] Client getrennt: {}", uuid);
-    }
-
-    /// Handler für einen neuen TCP-Client
-    async fn handle_client_tcp(self: Arc<Self>, stream: TcpStream) {
-        let (read, write) = tokio::io::split(stream);
-        self.handle_client(read, write).await;
-    }
-
-    /// Handler für einen neuen Unix-Client
-    async fn handle_client_unix(self: Arc<Self>, stream: UnixStream) {
-        let (read, write) = tokio::io::split(stream);
-        self.handle_client(read, write).await;
     }
 }

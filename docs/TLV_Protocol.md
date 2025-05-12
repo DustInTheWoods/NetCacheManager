@@ -2,8 +2,6 @@
 
 ## Protocol Structure
 
-This documentation describes the TLV (Type-Length-Value) protocol used for **ByteWizard**.
-
 Each message consists of a fixed 4-byte length field, an event byte, and optional TLV fields.
 
 ### Message Structure
@@ -184,5 +182,5 @@ Return system-level information.
 
 ---
 
-> **Note:** For all errors, an optional `ERROR` field with descriptive text may be included in the response.
+> **Note:** All messages (including errors and heartbeats, if used) must always follow the structure `[LENGTH (4 bytes)] [EVENT/STATUS (1 byte)] [TLV fields...]`. The MESSAGE_ID field is required in every request (except ping) and must be mirrored in the response.
 
