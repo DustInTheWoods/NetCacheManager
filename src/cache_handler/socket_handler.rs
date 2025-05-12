@@ -1,16 +1,16 @@
+use bincode::de;
 use bytes::{BufMut, Bytes, BytesMut};
 use crate::config::config::Config;
 use crate::protocol::tlv::{encode_tlv_fields, parse_tlv_fields, TlvField, TlvFieldTypes};
 use crate::cache_handler::ram_handler::RamStore;
 use crate::cache_handler::storage_handler::{handle_event, StorageError};
+use crate::replication_layer::Replication;
 use log::{debug, error, info, warn};
 use std::sync::Arc;
-use std::time::Instant;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream, UnixListener, UnixStream};
-use tokio::time::{timeout, Duration};
 
-pub async fn start_server(config: Config, store: Arc<RamStore>) {
+pub async fn start_server(config: Config, store: Arc<RamStore>, sync_manager: Option<Arc<Replication>>) {
     info!("[start_server] Starte Server im Modus: {:?}", config.socket.mode);
     match config.socket.mode.as_str() {
         "unix" => {
@@ -23,7 +23,10 @@ pub async fn start_server(config: Config, store: Arc<RamStore>) {
                     let (stream, addr) = listener.accept().await.expect("Fehler beim Annehmen");
                     info!("[start_server] Neue Verbindung von: {:?}", addr);
                     let store = store.clone();
-                    tokio::spawn(handle_unix_client(stream, store));
+                    let sync_manager = sync_manager.clone();
+                    tokio::spawn(async move {
+                        handle_unix_client(stream, store, sync_manager).await;
+                    });
                 }
             }
         }
@@ -36,7 +39,10 @@ pub async fn start_server(config: Config, store: Arc<RamStore>) {
                     let (stream, addr) = listener.accept().await.expect("Fehler beim Annehmen");
                     info!("[start_server] Neue Verbindung von: {:?}", addr);
                     let store = store.clone();
-                    tokio::spawn(handle_tcp_client(stream, store));
+                    let sync_manager = sync_manager.clone();
+                    tokio::spawn(async move {
+                        handle_tcp_client(stream, store, sync_manager).await;
+                    });
                 }
             }
         }
@@ -47,20 +53,20 @@ pub async fn start_server(config: Config, store: Arc<RamStore>) {
     }
 }
 
-async fn handle_unix_client(stream: UnixStream, store: Arc<RamStore>) {
+async fn handle_unix_client(stream: UnixStream, store: Arc<RamStore>, sync_manager: Option<Arc<Replication>>) {
     info!("[handle_unix_client] Starte Handler für Unix-Client");
-    handle_client(stream, store).await;
+    handle_client(stream, store, sync_manager).await;
 }
 
-async fn handle_tcp_client(stream: TcpStream, store: Arc<RamStore>) {
+async fn handle_tcp_client(stream: TcpStream, store: Arc<RamStore>, sync_manager: Option<Arc<Replication>>) {
     info!("[handle_tcp_client] Starte Handler für TCP-Client");
     stream.set_nodelay(true).expect("Setze TCP_NODELAY fehlgeschlagen");
-    handle_client(stream, store).await;
+    handle_client(stream, store, sync_manager).await;
 }
 
-async fn handle_client<S>(mut stream: S, store: Arc<RamStore>)
+async fn handle_client<S>(mut stream: S, store: Arc<RamStore>, sync_manager: Option<Arc<Replication>>)
 where
-    S: AsyncReadExt + AsyncWriteExt + Unpin,
+    S: AsyncReadExt + AsyncWriteExt + Unpin + Send + 'static,
 {
     info!("[handle_client] Starte Client-Handler (Thread: {:?})", std::thread::current().id());
     loop {
@@ -69,66 +75,42 @@ where
             error!("[handle_client] Fehler beim Lesen der Nachrichtenlänge: {}", e);
             break;
         }
-        debug!("[handle_client] Gelesene Bytes für Länge: {:02x?}", len_buf);
-        let msg_len = u32::from_be_bytes(len_buf) as usize;
-        debug!("[handle_client] Nachrichtenlänge: {} Bytes", msg_len);
 
-        let start_time = Instant::now();
-
-        let mut msg_buf = vec![0u8; msg_len];
-        let mut read = 0;
-        while read < msg_len {
-            match timeout(Duration::from_secs(6), stream.read(&mut msg_buf[read..])).await {
-                Ok(Ok(0)) => {
-                    error!("[handle_client] Verbindung vorzeitig geschlossen");
-                    break;
-                }
-                Ok(Ok(n)) => {
-                    debug!("[handle_client] Gelesen: {} Bytes", n);
-                    read += n;
-                }
-                Ok(Err(e)) => {
-                    error!("[handle_client] Fehler beim Lesen der Nachricht: {}", e);
-                    break;
-                }
-                Err(_) => {
-                    error!("[handle_client] Timeout beim Lesen der Nachricht überschritten");
-                    break;
-                }
-            }
-        }
-        if read != msg_len {
-            error!("[handle_client] Unerwartete Nachrichtenlänge: erwartet {}, gelesen {}", msg_len, read);
+        // Überprüfen, ob die Länge 0 ist (Verbindung geschlossen)
+        if len_buf == [0, 0, 0, 0] {
+            info!("[handle_client] Verbindung geschlossen (Länge 0)");
             break;
+        }
+
+        debug!("[handle_client] Gelesene Nachrichtenlänge: {:?}", len_buf);
+
+        let msg_len = u32::from_be_bytes(len_buf) as usize;
+        let mut msg_buf = vec![0u8; msg_len];
+        if let Err(e) = stream.read_exact(&mut msg_buf).await {
+            error!("[handle_client] Fehler beim Lesen der Nachricht: {}", e);
+            break;
+        }
+
+        let full_packet = [&len_buf[..], &msg_buf[..]].concat();
+
+        // Sync-Weiterleitung: Wenn SyncManager vorhanden, leite an Master/Slaves weiter
+        if let Some(sync_manager) = &sync_manager {
+            info!("[handle_client] Leite Nachricht an SyncManager weiter");
+            if let Err(e) = sync_manager.sync_message(&full_packet).await {
+                warn!("[handle_client] Sync-Weiterleitung fehlgeschlagen: {}", e);
+            }
         }
 
         let event = msg_buf[0];
         let fields = parse_tlv_fields(Bytes::copy_from_slice(&msg_buf[1..]));
-
-        info!("[handle_client] Empfangenes Event: {:#04x}, {} TLVs: {:?}", event, fields.len(), fields);
-
         let response = match handle_event(event, fields.clone(), store.clone()).await {
-            Ok(tlvs) => {
-                info!("[handle_client] Event 0x{:02X} erfolgreich verarbeitet, sende OK-Antwort", event);
-                ResponseBuilder::ok(Some(tlvs))
-            },
-            Err(err) => {
-                error!("[handle_client] Fehler bei Event 0x{:02X}: {:?}", event, err);
-                ResponseBuilder::error(err, &fields)
-            },
+            Ok(tlvs) => ResponseBuilder::ok(Some(tlvs)),
+            Err(err) => ResponseBuilder::error(err, &fields),
         };
-
-        debug!(
-            "[handle_client] Zeit zur Verarbeitung der Anfrage: {:?}. Sende Antwort ({} Bytes)",
-            Instant::now() - start_time,
-            response.len()
-        );
-
         if let Err(e) = stream.write_all(&response).await {
             error!("[handle_client] Fehler beim Senden der Antwort: {}", e);
             break;
         }
-        info!("[handle_client] Antwort gesendet.");
     }
     info!("[handle_client] Client-Handler beendet.");
 }

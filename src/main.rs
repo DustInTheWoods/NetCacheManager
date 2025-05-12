@@ -4,12 +4,14 @@ mod config;
 mod protocol;
 mod cache_handler;
 mod eventrelay;
+mod replication_layer;
 
 use config::config::Config;
 use cache_handler::socket_handler::start_server;
 use eventrelay::eventrelay::EventRelay;
 use log::{debug, info};
 use cache_handler::ram_handler::RamStore;
+use replication_layer::Replication;
 use std::{env, sync::Arc};
 
 #[tokio::main]
@@ -39,7 +41,22 @@ async fn main() {
         }
     });
 
-    // 4. Server starten mit Store
+    // 4. Replication starten, falls aktiviert
+    let mut sync_manager = None;
+    if let Some(sync_cfg) = &config.sync {
+        if sync_cfg.enabled {
+            let manager = Replication::new(
+                sync_cfg.server_addr.clone(),
+                sync_cfg.peers.clone(),
+                sync_cfg.sync_interval,
+                sync_cfg.sync_timeout.unwrap_or(sync_cfg.sync_interval * 3),
+            );
+            tokio::spawn(manager.clone().start());
+            sync_manager = Some(manager);
+        }
+    }
+
+    // 5. Server starten mit Store
     info!("Starte NetCacheManager im {:?}-Modus", config.socket.mode);
-    start_server(config, store).await;
+    start_server(config, store, sync_manager.clone()).await;
 }
